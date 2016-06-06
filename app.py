@@ -8,7 +8,6 @@ import os
 from envparse import env
 from time import time
 from aiohttp import web, ClientSession, TCPConnector
-from lxml import etree
 
 assert sys.version_info >= (3, 4), "Require python version >= 3.4"
 
