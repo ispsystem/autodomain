@@ -22,7 +22,7 @@ DOMAIN_TTL = env.int('DOMAIN_TTL', default=3600)
 MYSQL_USER = env('MYSQL_USER', default='pdns')
 MYSQL_PASSWORD = env('MYSQL_PASSWORD')
 MYSQL_HOST = env('MYSQL_HOST', default='localhost')
-MYSQL_DB = env('MYSQ_DB', default='domain_test')
+MYSQL_DB = env('MYSQL_DB', default='domain_test')
 
 MYSQL_POOL_MINSIZE = 2
 MYSQL_POOL_MAXSIZE = 40
