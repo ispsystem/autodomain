@@ -6,6 +6,7 @@ import aiomysql
 import logging
 import os
 from envparse import env
+from hashlib import md5
 from time import time
 from aiohttp import web, ClientSession, TCPConnector
 
@@ -27,6 +28,7 @@ MYSQL_DB = env('MYSQL_DB', default='domain_test')
 MYSQL_POOL_MINSIZE = 2
 MYSQL_POOL_MAXSIZE = 40
 
+WITH_POOL = False
 
 @asyncio.coroutine
 def authorize(app, handler):
@@ -75,53 +77,69 @@ def update_record(name, ip, conn):
 
 @asyncio.coroutine
 def create_domain(request):
-    id = request.GET.get('id')
+    raw_id = request.GET.get('id')
+    raw_id = raw_id.strip().lower()
+    id = md5(raw_id.encode()).hexdigest()[0:7]
     name = 'l%s.%s' % (id, DOMAIN_ZONE)
     ip = request.GET.get('ip')
-    with (yield from request.app.pool) as conn:
-        try:
-            if (yield from is_record_exists(name, conn)):
-                logging.debug('Domain %s exist' % name)
-                yield from update_record(name, ip, conn)
-            else:
-                logging.debug('Domain %s not exist' % name)
-                yield from create_record(name, ip, conn)
-                text = 'Created'
-            yield from conn.commit()
-            return web.Response(text=name)
-        except Exception as exc:
-            yield from conn.rollback()
-            logging.exception(exc)
-            return web.HTTPInternalServerError()
+    if WITH_POOL:
+        conn = yield from request.app.pool
+    else:
+        conn = yield from connect(request.app.loop)
+    try:
+        if (yield from is_record_exists(name, conn)):
+            logging.debug('Domain %s exist' % name)
+            yield from update_record(name, ip, conn)
+        else:
+            logging.debug('Domain %s not exist' % name)
+            yield from create_record(name, ip, conn)
+            text = 'Created'
+        yield from conn.commit()
+        return web.Response(text=name)
+    except Exception as exc:
+        yield from conn.rollback()
+        logging.exception(exc)
+        return web.HTTPInternalServerError()
 
 @asyncio.coroutine
 def remove_domain(request):
     id = request.GET.get('id')
     name = 'l%s.%s' % (id, DOMAIN_ZONE)
-    with (yield from request.app.pool) as conn:
-        try:
-            cur = yield from conn.cursor()
-            query = """DELETE FROM records WHERE name = %s"""
-            yield from cur.execute(query, (name,))
-            query = """ UPDATE records SET change_date = (""" \
-                    """     SELECT max(t.max_date) FROM (""" \
-                    """         SELECT MAX(change_date)+1 as max_date FROM records""" \
-                    """     ) as t""" \
-                    """ ) """ \
-                    """ WHERE records.type = 'SOA' AND records.domain_id = %s;"""
-            yield from cur.execute(query, (DOMAIN_ID,))
-            yield from conn.commit()
-            return web.Response(text='OK')
-        except Exception as exc:
-            yield from conn.rollback()
-            logging.exception(exc)
-            return web.HTTPInternalServerError()
-        finally:
-            yield from cur.close()
 
+    if WITH_POOL:
+        conn = yield from request.app.pool
+    else:
+        conn = yield from connect(request.app.loop)
+    try:
+        cur = yield from conn.cursor()
+        query = """DELETE FROM records WHERE name = %s"""
+        yield from cur.execute(query, (name,))
+        query = """ UPDATE records SET change_date = (""" \
+                """     SELECT max(t.max_date) FROM (""" \
+                """         SELECT MAX(change_date)+1 as max_date FROM records""" \
+                """     ) as t""" \
+                """ ) """ \
+                """ WHERE records.type = 'SOA' AND records.domain_id = %s;"""
+        yield from cur.execute(query, (DOMAIN_ID,))
+        yield from conn.commit()
+        return web.Response(text='OK')
+    except Exception as exc:
+        yield from conn.rollback()
+        logging.exception(exc)
+        return web.HTTPInternalServerError()
+    finally:
+        yield from cur.close()
 
 @asyncio.coroutine
 def connect(loop):
+    return (yield  from aiomysql.connect(
+        host=MYSQL_HOST, port=3306,
+        user=MYSQL_USER, password=MYSQL_PASSWORD,
+        db=MYSQL_DB, loop=loop, echo=True,
+    ))
+
+@asyncio.coroutine
+def connect_pool(loop):
     return (yield from aiomysql.create_pool(
             host=MYSQL_HOST, port=3306,
             user=MYSQL_USER, password=MYSQL_PASSWORD,
@@ -141,8 +159,9 @@ if __name__ == '__main__':
     for r in ['/delete', '/delete/', '/delete.php', '/delete.html']:
         app.router.add_route('GET', r, remove_domain)
 
-    pool = loop.run_until_complete(connect(loop))
-    app.pool = pool
+    if WITH_POOL:
+        pool = loop.run_until_complete(connect_pool(loop))
+        app.pool = pool
 
     web.run_app(app)
     sys.exit(0)
