@@ -83,7 +83,7 @@ def create_domain(request):
     name = 'l%s.%s' % (id, DOMAIN_ZONE)
     ip = request.GET.get('ip')
     if WITH_POOL:
-        conn = yield from request.app.pool
+        conn = yield from request.app.pool.acquire()
     else:
         conn = yield from connect(request.app.loop)
     try:
@@ -100,6 +100,12 @@ def create_domain(request):
         yield from conn.rollback()
         logging.exception(exc)
         return web.HTTPInternalServerError()
+    finally:
+        if WITH_POOL:
+            request.app.pool.release(conn)
+        else:
+            yield from conn.ensure_closed()
+
 
 @asyncio.coroutine
 def remove_domain(request):
