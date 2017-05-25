@@ -28,7 +28,7 @@ MYSQL_DB = env('MYSQL_DB', default='domain_test')
 MYSQL_POOL_MINSIZE = 2
 MYSQL_POOL_MAXSIZE = 40
 
-WITH_POOL = False
+WITH_POOL = True
 
 @asyncio.coroutine
 def authorize(app, handler):
@@ -58,27 +58,36 @@ def is_record_exists(name, conn):
 def create_record(name, ip, conn):
     cur = yield from conn.cursor()
     cur_time = int(time())
+    if ':' in ip:
+        rtype = 'AAAA'
+    else:
+        rtype = 'A'
     # change_date используется powerdns для автоматиеческого обновления SOA
     # Если SOA указан равный нулю, то используется последний из change_date
     # Бояться одинаковых значений не стоит, так как powerdns всё равно инфорамацию отдаёт
     # с некоторой задержкой, в результате гарантировано все значения с одним timestamp будут в памяти
     query = """INSERT INTO records (domain_id, name, type, content, ttl, prio, change_date)""" \
-            """values(%s, %s, 'A', %s, %s, 0, %s)"""
-    yield from cur.execute(query, (DOMAIN_ID, name, ip, DOMAIN_TTL, cur_time))
+            """values(%s, %s, %s, %s, %s, 0, %s)"""
+    yield from cur.execute(query, (DOMAIN_ID, name, rtype, ip, DOMAIN_TTL, cur_time))
     yield from cur.close()
 
 @asyncio.coroutine
 def update_record(name, ip, conn):
     cur = yield from conn.cursor()
     cur_time = int(time())
-    query = """UPDATE records SET content=%s , change_date = %s  WHERE name=%s and domain_id=%s"""
-    yield from cur.execute(query, (ip, cur_time, name, DOMAIN_ID))
+    if ':' in ip:
+        rtype = 'AAAA'
+    else:
+        rtype = 'A'
+    query = """UPDATE records SET content=%s , change_date = %s, type = %s WHERE name=%s and domain_id=%s"""
+    yield from cur.execute(query, (ip, cur_time, rtype, name, DOMAIN_ID))
     yield from cur.close()
 
 @asyncio.coroutine
 def create_domain(request):
     raw_id = request.GET.get('id')
     raw_id = raw_id.strip().lower()
+    logging.debug('Raw ID: %s' % raw_id)
     id = md5(raw_id.encode()).hexdigest()[0:7]
     name = 'l%s.%s' % (id, DOMAIN_ZONE)
     ip = request.GET.get('ip')
