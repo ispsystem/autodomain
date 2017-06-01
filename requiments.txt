@@ -1,4 +1,6 @@
-aiohttp
-asyncio
-aiomysql
-envparse
+aiohttp==0.21.6
+aiomysql==0.0.7
+chardet==2.3.0
+envparse==0.2.0
+lxml==3.6.0
+PyMySQL==0.6.7
